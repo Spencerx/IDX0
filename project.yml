@@ -1,0 +1,76 @@
+name: idx0
+options:
+  bundleIdPrefix: com.gal
+  xcodeVersion: "26.3"
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+    MACOSX_DEPLOYMENT_TARGET: 14.0
+
+targets:
+  idx0:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: idx0
+        excludes:
+          - Resources/IconBackups/**
+      - path: Sources/IPCShared
+      - path: ghostty.h
+      - path: idx0-GhosttyBridge.h
+      - path: idx0-Bridging-Header.h
+    resources:
+      - path: idx0/Resources
+        excludes:
+          - IconBackups/**
+    dependencies:
+      - framework: GhosttyKit.xcframework
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gal.idx0
+        PRODUCT_NAME: idx0
+        MARKETING_VERSION: 0.0.1
+        CURRENT_PROJECT_VERSION: 1
+        GENERATE_INFOPLIST_FILE: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_CFBundleIconFile: idx0.icns
+        INFOPLIST_KEY_CFBundleDisplayName: IDX0
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        SWIFT_OBJC_BRIDGING_HEADER: idx0-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - $(SRCROOT)
+        CODE_SIGN_STYLE: Automatic
+        LD_RUNPATH_SEARCH_PATHS:
+          - $(inherited)
+          - "@executable_path/../Frameworks"
+        OTHER_LDFLAGS:
+          - -lc++
+          - -framework
+          - Metal
+          - -framework
+          - QuartzCore
+          - -framework
+          - IOSurface
+          - -framework
+          - UniformTypeIdentifiers
+          - -framework
+          - Carbon
+          - -framework
+          - AppIntents
+    scheme:
+      testTargets:
+        - idx0Tests
+
+  idx0Tests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - idx0Tests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: idx0

@@ -1,0 +1,19 @@
+{
+  "runtimeName": "code-server",
+  "version": "4.112.0",
+  "executableRelativePath": "bin/code-server",
+  "artifacts": [
+    {
+      "platform": "macos-arm64",
+      "downloadURL": "https://github.com/coder/code-server/releases/download/v4.112.0/code-server-4.112.0-macos-arm64.tar.gz",
+      "sha256": "1a0a3cfbd7b5c946c1bbdf56a2b0a92b2995f5da316ca5f599e5ec782c00fb71",
+      "extractDirectoryName": "code-server-4.112.0-macos-arm64"
+    },
+    {
+      "platform": "macos-amd64",
+      "downloadURL": "https://github.com/coder/code-server/releases/download/v4.112.0/code-server-4.112.0-macos-amd64.tar.gz",
+      "sha256": "f1ad6c133ae6e46904af4d81a55f415382c6b7eb83df8383deaea90c9b7fd58a",
+      "extractDirectoryName": "code-server-4.112.0-macos-amd64"
+    }
+  ]
+}

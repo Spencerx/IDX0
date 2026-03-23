@@ -1,0 +1,151 @@
+import Foundation
+
+struct VibeCLIDiscoveryService {
+    private let environment: [String: String]
+    private let fileManager: FileManager
+    private let shellLookup: (String) -> String?
+
+    init(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default,
+        shellLookup: ((String) -> String?)? = nil
+    ) {
+        self.environment = environment
+        self.fileManager = fileManager
+        let lookupEnvironment = environment
+        self.shellLookup = shellLookup ?? { executable in
+            // 1) Fast login-shell lookup (reads .zprofile/.zlogin for zsh).
+            if let path = Self.resolveWithLoginShell(executable: executable, environment: lookupEnvironment) {
+                return path
+            }
+            // 2) Fallback to interactive+login shell for setups that export PATH in .zshrc.
+            return Self.resolveWithInteractiveLoginShell(executable: executable, environment: lookupEnvironment)
+        }
+    }
+
+    func discoverInstalledTools() -> [VibeCLITool] {
+        let searchDirectories = pathDirectories()
+        return VibeCLITool.known.map { tool in
+            var next = tool
+            next.resolvedPath = resolveExecutable(for: tool, searchDirectories: searchDirectories)
+            next.isInstalled = next.resolvedPath != nil
+            return next
+        }
+    }
+
+    func tool(withID id: String?) -> VibeCLITool? {
+        guard let id else { return nil }
+        return discoverInstalledTools().first(where: { $0.id == id })
+    }
+
+    private func resolveExecutable(for tool: VibeCLITool, searchDirectories: [String]) -> String? {
+        for candidate in executableCandidates(for: tool) {
+            if let resolved = resolveExecutable(named: candidate, searchDirectories: searchDirectories) {
+                return resolved
+            }
+        }
+        return nil
+    }
+
+    private func executableCandidates(for tool: VibeCLITool) -> [String] {
+        if tool.id == "gemini-cli" {
+            return [tool.executableName, "gemini"]
+        }
+        return [tool.executableName]
+    }
+
+    private func resolveExecutable(named executable: String, searchDirectories: [String]) -> String? {
+        for directory in searchDirectories {
+            let candidate = URL(fileURLWithPath: directory)
+                .appendingPathComponent(executable, isDirectory: false)
+                .path
+            if fileManager.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+
+        if let shellResolved = shellLookup(executable),
+           fileManager.isExecutableFile(atPath: shellResolved) {
+            return shellResolved
+        }
+
+        return nil
+    }
+
+    private func pathDirectories() -> [String] {
+        var directories: [String] = []
+        let envPath = environment["PATH"] ?? ""
+        directories.append(contentsOf: envPath.split(separator: ":").map(String.init))
+        directories.append(contentsOf: defaultPathDirectories())
+
+        var seen: Set<String> = []
+        var unique: [String] = []
+        for directory in directories {
+            guard !directory.isEmpty else { continue }
+            if seen.insert(directory).inserted {
+                unique.append(directory)
+            }
+        }
+        return unique
+    }
+
+    private func defaultPathDirectories() -> [String] {
+        let home = NSHomeDirectory()
+        return [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "\(home)/.asdf/shims",
+            "\(home)/.volta/bin",
+            "\(home)/.cargo/bin",
+            "\(home)/.local/bin",
+            "\(home)/bin",
+            "\(home)/.bun/bin",
+            "\(home)/Library/pnpm",
+            "\(home)/.npm-global/bin",
+            "\(home)/.yarn/bin",
+            "\(home)/.config/yarn/global/node_modules/.bin",
+            "\(home)/.nvm/versions/node/current/bin"
+        ]
+    }
+
+    private static func resolveWithLoginShell(executable: String, environment: [String: String]) -> String? {
+        resolveWithShell(executable: executable, argumentFlag: "-lc", environment: environment)
+    }
+
+    private static func resolveWithInteractiveLoginShell(executable: String, environment: [String: String]) -> String? {
+        resolveWithShell(executable: executable, argumentFlag: "-ilc", environment: environment)
+    }
+
+    private static func resolveWithShell(executable: String, argumentFlag: String, environment: [String: String]) -> String? {
+        guard executable.range(of: #"^[A-Za-z0-9._+-]+$"#, options: .regularExpression) != nil else {
+            return nil
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = [argumentFlag, "command -v \(executable)"]
+        process.environment = environment
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return nil
+        }
+
+        guard process.terminationStatus == 0 else { return nil }
+        let output = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        let lines = output
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return lines.last(where: { $0.hasPrefix("/") })
+    }
+}

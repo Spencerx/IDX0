@@ -1,0 +1,7 @@
+# One relative file path per line.
+# Use only for approved temporary exceptions to hard limits.
+# Example:
+# idx0/Services/SessionService.swift
+
+# Runtime-heavy exceptions pending future decomposition.
+idx0/Apps/VSCode/VSCodeRuntime.swift

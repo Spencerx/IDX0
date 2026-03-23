@@ -1,0 +1,48 @@
+{
+  "fill-specializations" : [
+    {
+      "value" : {
+        "solid" : "display-p3:0.01772,0.02842,0.45639,1.00000"
+      }
+    },
+    {
+      "appearance" : "dark",
+      "value" : {
+        "solid" : "display-p3:0.00000,0.01126,0.44010,1.00000"
+      }
+    }
+  ],
+  "groups" : [
+    {
+      "hidden" : false,
+      "layers" : [
+        {
+          "blend-mode" : "darken",
+          "fill" : "automatic",
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "idx0-logo.svg",
+          "name" : "idx0-logo",
+          "position" : {
+            "scale" : 6.8,
+            "translation-in-points" : [
+              0.7999999999999545,
+              4.2000000000000455
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : "shared"
+  }
+}
