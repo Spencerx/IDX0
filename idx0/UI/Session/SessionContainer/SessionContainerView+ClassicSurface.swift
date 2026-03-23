@@ -109,7 +109,7 @@ extension SessionContainerView {
                     sessionID: session.id,
                     focusedControllerID: resolvedFocusedControllerID,
                     controllerProvider: { controllerID in
-                        sessionService.paneController(for: controllerID)
+                        sessionService.ensurePaneController(for: controllerID)
                     },
                     onFocus: { controllerID in
                         sessionService.setFocusedPane(sessionID: session.id, controllerID: controllerID)

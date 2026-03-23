@@ -75,7 +75,7 @@ extension SessionContainerView {
         .help("Add Tile")
         .popover(
             isPresented: $niriQuickAddMenuPresented,
-            attachmentAnchor: .point(.topTrailing),
+            attachmentAnchor: .point(.topLeading),
             arrowEdge: .top
         ) {
             niriQuickAddMenuContent(sessionID: sessionID)

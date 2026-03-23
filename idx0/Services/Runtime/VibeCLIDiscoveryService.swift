@@ -12,15 +12,7 @@ struct VibeCLIDiscoveryService {
     ) {
         self.environment = environment
         self.fileManager = fileManager
-        let lookupEnvironment = environment
-        self.shellLookup = shellLookup ?? { executable in
-            // 1) Fast login-shell lookup (reads .zprofile/.zlogin for zsh).
-            if let path = Self.resolveWithLoginShell(executable: executable, environment: lookupEnvironment) {
-                return path
-            }
-            // 2) Fallback to interactive+login shell for setups that export PATH in .zshrc.
-            return Self.resolveWithInteractiveLoginShell(executable: executable, environment: lookupEnvironment)
-        }
+        self.shellLookup = shellLookup ?? { _ in nil }
     }
 
     func discoverInstalledTools() -> [VibeCLITool] {
@@ -76,6 +68,7 @@ struct VibeCLIDiscoveryService {
         var directories: [String] = []
         let envPath = environment["PATH"] ?? ""
         directories.append(contentsOf: envPath.split(separator: ":").map(String.init))
+        directories.append(contentsOf: shellPathDirectories())
         directories.append(contentsOf: defaultPathDirectories())
 
         var seen: Set<String> = []
@@ -110,22 +103,21 @@ struct VibeCLIDiscoveryService {
         ]
     }
 
-    private static func resolveWithLoginShell(executable: String, environment: [String: String]) -> String? {
-        resolveWithShell(executable: executable, argumentFlag: "-lc", environment: environment)
-    }
-
-    private static func resolveWithInteractiveLoginShell(executable: String, environment: [String: String]) -> String? {
-        resolveWithShell(executable: executable, argumentFlag: "-ilc", environment: environment)
-    }
-
-    private static func resolveWithShell(executable: String, argumentFlag: String, environment: [String: String]) -> String? {
-        guard executable.range(of: #"^[A-Za-z0-9._+-]+$"#, options: .regularExpression) != nil else {
-            return nil
+    private func shellPathDirectories() -> [String] {
+        var directories: [String] = []
+        if let loginPath = Self.pathFromZsh(argumentFlag: "-lc", environment: environment) {
+            directories.append(contentsOf: loginPath.split(separator: ":").map(String.init))
         }
+        if let interactivePath = Self.pathFromZsh(argumentFlag: "-ilc", environment: environment) {
+            directories.append(contentsOf: interactivePath.split(separator: ":").map(String.init))
+        }
+        return directories
+    }
 
+    private static func pathFromZsh(argumentFlag: String, environment: [String: String]) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = [argumentFlag, "command -v \(executable)"]
+        process.arguments = [argumentFlag, "printf '%s' \"$PATH\""]
         process.environment = environment
 
         let stdout = Pipe()
@@ -142,10 +134,8 @@ struct VibeCLIDiscoveryService {
 
         guard process.terminationStatus == 0 else { return nil }
         let output = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        let lines = output
-            .split(whereSeparator: \.isNewline)
-            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        return lines.last(where: { $0.hasPrefix("/") })
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !output.isEmpty else { return nil }
+        return output
     }
 }

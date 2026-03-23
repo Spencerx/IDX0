@@ -44,6 +44,7 @@ extension SessionService {
             if selectedTabID(for: sessionID) != tabID {
                 selectTab(sessionID: sessionID, tabID: tabID)
             }
+            niriPrimeTabController(sessionID: sessionID, tabID: tabID)
             setLastFocusedSurface(for: sessionID, surface: .terminal)
         case .browser:
             _ = niriBrowserController(for: sessionID, itemID: itemID)
@@ -130,8 +131,9 @@ extension SessionService {
 
     func niriPrimeTabController(sessionID: UUID, tabID: UUID) {
         guard let tab = tabState(sessionID: sessionID, tabID: tabID) else { return }
+        let controllerID = tab.activeControllerID
         guard let controller = ensureController(
-            forControllerID: tab.rootControllerID,
+            forControllerID: controllerID,
             ownerSessionID: sessionID
         ) else { return }
         controller.requestLaunchIfNeeded()

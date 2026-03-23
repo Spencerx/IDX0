@@ -144,7 +144,7 @@ extension SessionContainerView {
                     sessionID: session.id,
                     focusedControllerID: focusedControllerID,
                     controllerProvider: { controllerID in
-                        sessionService.paneController(for: controllerID)
+                        sessionService.ensurePaneController(for: controllerID)
                     },
                     onFocus: { controllerID in
                         sessionService.niriSelectItem(sessionID: session.id, itemID: item.id)

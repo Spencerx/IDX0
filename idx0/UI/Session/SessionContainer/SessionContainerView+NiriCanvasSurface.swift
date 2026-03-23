@@ -9,10 +9,10 @@ extension SessionContainerView {
         let runtime = niriRuntimeBySession[session.id] ?? NiriCanvasRuntimeState()
 
         return niriCanvasSurfaceBody(session: session, layout: layout, runtime: runtime)
-        .overlay(alignment: .topTrailing) {
+        .overlay(alignment: .topLeading) {
             niriCanvasQuickAddButton(sessionID: session.id)
                 .padding(.top, 38)
-                .padding(.trailing, 10)
+                .padding(.leading, 10)
         }
         .overlay(alignment: .topTrailing) {
             if let visualizer = niriActiveResizeVisualizer(

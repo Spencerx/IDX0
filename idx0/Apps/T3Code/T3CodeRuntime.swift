@@ -311,14 +311,14 @@ final class T3BuildCoordinator {
 
         try await runChecked(
             executable: "/bin/zsh",
-            arguments: ["-lc", manifest.installCommand],
+            arguments: ["-ilc", manifest.installCommand],
             currentDirectory: paths.sourceDirectory.path,
             paths: paths
         )
 
         try await runChecked(
             executable: "/bin/zsh",
-            arguments: ["-lc", manifest.buildCommand],
+            arguments: ["-ilc", manifest.buildCommand],
             currentDirectory: paths.sourceDirectory.path,
             paths: paths
         )
@@ -332,7 +332,7 @@ final class T3BuildCoordinator {
                 appendBuildLog(paths: paths, line: "Client bundle missing after build; running canonical full build")
                 try await runChecked(
                     executable: "/bin/zsh",
-                    arguments: ["-lc", T3BuildManifest.canonicalBuildCommand],
+                    arguments: ["-ilc", T3BuildManifest.canonicalBuildCommand],
                     currentDirectory: paths.sourceDirectory.path,
                     paths: paths
                 )
@@ -364,23 +364,44 @@ final class T3BuildCoordinator {
     }
 
     private func ensureToolAvailable(_ tool: String, paths: T3RuntimePaths) async throws {
-        let result = try await processRunner.run(
-            executable: "/usr/bin/which",
-            arguments: [tool],
-            currentDirectory: nil
-        )
+        let probes: [(executable: String, arguments: [String], display: String)] = [
+            ("/usr/bin/which", [tool], "which \(tool)"),
+            ("/bin/zsh", ["-lc", "whence -p \(tool)"], "zsh -lc 'whence -p \(tool)'"),
+            ("/bin/zsh", ["-ilc", "whence -p \(tool)"], "zsh -ilc 'whence -p \(tool)'")
+        ]
 
-        appendBuildLog(paths: paths, line: "$ which \(tool)")
-        if !result.stdout.isEmpty {
-            appendBuildLog(paths: paths, line: result.stdout)
-        }
-        if !result.stderr.isEmpty {
-            appendBuildLog(paths: paths, line: result.stderr)
+        for probe in probes {
+            let result = try await processRunner.run(
+                executable: probe.executable,
+                arguments: probe.arguments,
+                currentDirectory: nil
+            )
+
+            appendBuildLog(paths: paths, line: "$ \(probe.display)")
+            if !result.stdout.isEmpty {
+                appendBuildLog(paths: paths, line: result.stdout)
+            }
+            if !result.stderr.isEmpty {
+                appendBuildLog(paths: paths, line: result.stderr)
+            }
+
+            if result.exitCode == 0,
+               let resolvedPath = firstExecutablePath(from: result.stdout) {
+                appendBuildLog(paths: paths, line: "Resolved \(tool) -> \(resolvedPath)")
+                return
+            }
         }
 
-        guard result.exitCode == 0, !result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw T3RuntimeError.missingTool(tool)
-        }
+        throw T3RuntimeError.missingTool(tool)
+    }
+
+    private func firstExecutablePath(from output: String) -> String? {
+        let candidates = output
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        return candidates.first(where: { $0.hasPrefix("/") })
     }
 
     private func runChecked(
@@ -775,11 +796,9 @@ final class T3TileController: ObservableObject, NiriAppTileRuntimeControlling {
         logHandle = handle
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory, isDirectory: true)
 
-        process.arguments = [
-            "node",
+        let runtimeArguments = [
             entrypointURL.path,
             "--mode", "web",
             "--host", "127.0.0.1",
@@ -788,6 +807,16 @@ final class T3TileController: ObservableObject, NiriAppTileRuntimeControlling {
             "--no-browser",
             "--auto-bootstrap-project-from-cwd"
         ]
+
+        if let nodeExecutable = resolveRuntimeExecutablePath("node") {
+            process.executableURL = URL(fileURLWithPath: nodeExecutable)
+            process.arguments = runtimeArguments
+            appendRuntimeLog("resolved node executable: \(nodeExecutable)")
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = ["node"] + runtimeArguments
+            appendRuntimeLog("node resolution fallback: using /usr/bin/env node")
+        }
 
         var env = ProcessInfo.processInfo.environment
         env["T3CODE_MODE"] = "web"
@@ -837,6 +866,60 @@ final class T3TileController: ObservableObject, NiriAppTileRuntimeControlling {
         self.stderrPipe = stderr
 
         appendRuntimeLog("spawned process pid=\(process.processIdentifier) port=\(port)")
+    }
+
+    private func resolveRuntimeExecutablePath(_ executable: String) -> String? {
+        guard executable.range(of: #"^[A-Za-z0-9._+-]+$"#, options: .regularExpression) != nil else {
+            return nil
+        }
+
+        let probes: [(String, [String])] = [
+            ("/usr/bin/which", [executable]),
+            ("/bin/zsh", ["-lc", "whence -p \(executable)"]),
+            ("/bin/zsh", ["-ilc", "whence -p \(executable)"])
+        ]
+
+        for probe in probes {
+            if let resolved = runRuntimeProbe(executable: probe.0, arguments: probe.1) {
+                return resolved
+            }
+        }
+
+        return nil
+    }
+
+    private func runRuntimeProbe(executable: String, arguments: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.environment = ProcessInfo.processInfo.environment
+
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return nil
+        }
+
+        guard process.terminationStatus == 0 else {
+            return nil
+        }
+
+        let output = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        let candidates = output
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0.hasPrefix("/") }
+
+        for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate) {
+            return candidate
+        }
+
+        return nil
     }
 
     private func prepareIsolatedZdotDir() -> URL? {

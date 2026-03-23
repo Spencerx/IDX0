@@ -2,6 +2,33 @@ import XCTest
 @testable import idx0
 
 extension SessionServiceTests {
+    func testNiriSelectingTerminalPrimesMissingController() async throws {
+        let fixture = try Fixture()
+        let service = fixture.service
+
+        let session = try await service.createSession(from: SessionCreationRequest(title: "Niri Prime Controller")).session
+        service.ensureNiriLayoutState(for: session.id)
+
+        let layout = service.niriLayout(for: session.id)
+        guard let itemID = layout.camera.focusedItemID else {
+            XCTFail("Expected focused niri item")
+            return
+        }
+        guard let tabID = service.selectedTabID(for: session.id),
+              let tab = service.tabState(sessionID: session.id, tabID: tabID) else {
+            XCTFail("Expected selected tab")
+            return
+        }
+
+        let controllerID = tab.activeControllerID
+        service.runtimeControllers.removeValue(forKey: controllerID)
+        service.ownerSessionIDByControllerID.removeValue(forKey: controllerID)
+        XCTAssertNil(service.paneController(for: controllerID))
+
+        service.niriSelectItem(sessionID: session.id, itemID: itemID)
+        XCTAssertNotNil(service.paneController(for: controllerID))
+    }
+
     func testNiriLayoutMaintainsSingleTrailingEmptyWorkspace() async throws {
         let fixture = try Fixture()
         let service = fixture.service
