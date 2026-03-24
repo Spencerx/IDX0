@@ -47,15 +47,36 @@ final class ExcalidrawRuntimeTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
 
         let paths = ExcalidrawRuntimePaths(sessionID: UUID(), rootDirectoryOverride: root)
+        let binDirectory = root.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
+        let nodePath = binDirectory.appendingPathComponent("node", isDirectory: false)
+        try writeExecutable("#!/bin/sh\nexit 0\n", to: nodePath)
+
         let runner = StubExcalidrawProcessRunner { executable, arguments, _ in
-            guard executable == "/usr/bin/which", let tool = arguments.first else {
-                return ProcessResult(exitCode: 0, stdout: "", stderr: "")
+            if executable == "/usr/bin/which", let tool = arguments.first {
+                switch tool {
+                case "git":
+                    return ProcessResult(exitCode: 0, stdout: "/usr/bin/git", stderr: "")
+                case "node":
+                    return ProcessResult(exitCode: 0, stdout: nodePath.path, stderr: "")
+                case "yarn", "corepack":
+                    return ProcessResult(exitCode: 1, stdout: "", stderr: "not found")
+                default:
+                    return ProcessResult(exitCode: 0, stdout: "", stderr: "")
+                }
             }
 
-            if tool == "yarn" {
+            if executable == "/bin/zsh",
+               arguments == ["-lc", "whence -p yarn"] || arguments == ["-ilc", "whence -p yarn"] {
                 return ProcessResult(exitCode: 1, stdout: "", stderr: "not found")
             }
-            return ProcessResult(exitCode: 0, stdout: "/usr/bin/\(tool)", stderr: "")
+
+            if executable == "/bin/zsh",
+               arguments == ["-lc", "whence -p corepack"] || arguments == ["-ilc", "whence -p corepack"] {
+                return ProcessResult(exitCode: 1, stdout: "", stderr: "not found")
+            }
+
+            return ProcessResult(exitCode: 0, stdout: "", stderr: "")
         }
         let coordinator = ExcalidrawBuildCoordinator(processRunner: runner, fileManager: .default)
 
@@ -63,11 +84,18 @@ final class ExcalidrawRuntimeTests: XCTestCase {
             _ = try await coordinator.ensureBuilt(manifest: .default, paths: paths)
             XCTFail("Expected missing-tool error")
         } catch let error as ExcalidrawRuntimeError {
-            guard case .missingTool(let name) = error else {
+            guard case .missingYarnPackageManager(let resolvedNodePath) = error else {
                 XCTFail("Unexpected Excalidraw runtime error: \(error)")
                 return
             }
-            XCTAssertEqual(name, "yarn")
+            XCTAssertEqual(resolvedNodePath, nodePath.path)
+            XCTAssertEqual(
+                error.errorDescription,
+                """
+                Excalidraw found Node.js at \(nodePath.path), but could not find `yarn` or `corepack`.
+                Run `corepack enable` for that Node installation, or install Yarn, then retry.
+                """
+            )
         }
     }
 
@@ -174,7 +202,7 @@ final class ExcalidrawRuntimeTests: XCTestCase {
             if executable == "/bin/zsh",
                arguments.first == "-lc",
                arguments.count == 2,
-               arguments[1].contains(manifest.buildCommand) {
+               arguments[1].contains("--cwd excalidraw-app build") {
                 let artifact = paths.sourceDirectory.appendingPathComponent(manifest.entrypoint, isDirectory: false)
                 try FileManager.default.createDirectory(at: artifact.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try Data().write(to: artifact)
@@ -196,8 +224,14 @@ final class ExcalidrawRuntimeTests: XCTestCase {
                 invocation.1[1].contains("COREPACK_ENABLE_DOWNLOAD_PROMPT=0") &&
                 invocation.1[1].contains("export CI=1")
         })
-        XCTAssertTrue(shellInvocations.contains(where: { $0.1[1].contains(manifest.installCommand) }))
-        XCTAssertTrue(shellInvocations.contains(where: { $0.1[1].contains(manifest.buildCommand) }))
+        XCTAssertTrue(shellInvocations.contains(where: {
+            $0.1[1].contains("/usr/bin/yarn") &&
+                $0.1[1].contains("install --frozen-lockfile")
+        }))
+        XCTAssertTrue(shellInvocations.contains(where: {
+            $0.1[1].contains("/usr/bin/yarn") &&
+                $0.1[1].contains("--cwd excalidraw-app build")
+        }))
     }
 
     func testBuildCoordinatorUsesResolvedGitPathForGitCommands() async throws {
@@ -247,7 +281,7 @@ final class ExcalidrawRuntimeTests: XCTestCase {
             if executable == "/bin/zsh",
                arguments.first == "-lc",
                arguments.count == 2,
-               arguments[1].contains(manifest.buildCommand) {
+               arguments[1].contains("--cwd excalidraw-app build") {
                 let artifact = paths.sourceDirectory.appendingPathComponent(manifest.entrypoint, isDirectory: false)
                 try FileManager.default.createDirectory(at: artifact.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try Data().write(to: artifact)
@@ -263,6 +297,121 @@ final class ExcalidrawRuntimeTests: XCTestCase {
         XCTAssertTrue(invocations.contains(where: { $0.0 == resolvedGitPath && $0.1.first == "clone" }))
         XCTAssertTrue(invocations.contains(where: { $0.0 == resolvedGitPath && $0.1.contains("checkout") }))
         XCTAssertFalse(invocations.contains(where: { $0.0 == "/usr/bin/git" }))
+    }
+
+    func testBuildCoordinatorFallsBackToAdjacentCorepackWhenYarnIsMissing() async throws {
+        let root = temporaryExcalidrawRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let binDirectory = root.appendingPathComponent("node-bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
+
+        let nodePath = binDirectory.appendingPathComponent("node", isDirectory: false)
+        let corepackPath = binDirectory.appendingPathComponent("corepack", isDirectory: false)
+        try writeExecutable("#!/bin/sh\nexit 0\n", to: nodePath)
+        try writeExecutable("#!/bin/sh\nexit 0\n", to: corepackPath)
+
+        let paths = ExcalidrawRuntimePaths(sessionID: UUID(), rootDirectoryOverride: root)
+        let manifest = ExcalidrawBuildManifest.default
+
+        actor InvocationRecorder {
+            var values: [(String, [String], String?)] = []
+
+            func append(_ value: (String, [String], String?)) {
+                values.append(value)
+            }
+
+            func all() -> [(String, [String], String?)] {
+                values
+            }
+        }
+
+        let recorder = InvocationRecorder()
+
+        let runner = StubExcalidrawProcessRunner { executable, arguments, currentDirectory in
+            await recorder.append((executable, arguments, currentDirectory))
+
+            if executable == "/usr/bin/which", let tool = arguments.first {
+                switch tool {
+                case "git":
+                    return ProcessResult(exitCode: 0, stdout: "/usr/bin/git\n", stderr: "")
+                case "node", "yarn":
+                    return ProcessResult(exitCode: 1, stdout: "", stderr: "not found")
+                default:
+                    return ProcessResult(exitCode: 1, stdout: "", stderr: "")
+                }
+            }
+
+            if executable == "/bin/zsh", arguments == ["-lc", "whence -p node"] {
+                return ProcessResult(exitCode: 1, stdout: "", stderr: "")
+            }
+
+            if executable == "/bin/zsh", arguments == ["-ilc", "whence -p node"] {
+                return ProcessResult(
+                    exitCode: 0,
+                    stdout: """
+                    Dotfiles have changed remotely and locally:
+                    M zsh/.zshrc
+                    Seems unixorn/autoupdate-antigen.zshplugin is already installed!
+                    \(nodePath.path)
+                    """,
+                    stderr: ""
+                )
+            }
+
+            if executable == "/bin/zsh",
+               arguments == ["-lc", "whence -p yarn"] || arguments == ["-ilc", "whence -p yarn"] {
+                return ProcessResult(
+                    exitCode: 1,
+                    stdout: """
+                    Dotfiles have changed remotely and locally:
+                    M zsh/.zshrc
+                    Seems unixorn/autoupdate-antigen.zshplugin is already installed!
+                    """,
+                    stderr: ""
+                )
+            }
+
+            if executable == "/usr/bin/git", arguments.first == "clone" {
+                try FileManager.default.createDirectory(at: paths.sourceDirectory, withIntermediateDirectories: true)
+                try FileManager.default.createDirectory(
+                    at: paths.sourceDirectory.appendingPathComponent(".git", isDirectory: true),
+                    withIntermediateDirectories: true
+                )
+            }
+
+            if executable == "/bin/zsh",
+               arguments.first == "-lc",
+               arguments.count == 2,
+               arguments[1].contains("yarn --cwd excalidraw-app build") {
+                let artifact = paths.sourceDirectory.appendingPathComponent(manifest.entrypoint, isDirectory: false)
+                try FileManager.default.createDirectory(at: artifact.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data().write(to: artifact)
+            }
+
+            return ProcessResult(exitCode: 0, stdout: "", stderr: "")
+        }
+
+        let coordinator = ExcalidrawBuildCoordinator(processRunner: runner, fileManager: .default)
+        _ = try await coordinator.ensureBuilt(manifest: manifest, paths: paths)
+
+        let invocations = await recorder.all()
+        let shellInvocations = invocations.filter { $0.0 == "/bin/zsh" && $0.1.first == "-lc" }
+
+        XCTAssertTrue(
+            shellInvocations.contains(where: {
+                $0.1.count == 2 &&
+                    $0.1[1].contains(corepackPath.path) &&
+                    $0.1[1].contains("yarn install --frozen-lockfile")
+            })
+        )
+        XCTAssertTrue(
+            shellInvocations.contains(where: {
+                $0.1.count == 2 &&
+                    $0.1[1].contains(corepackPath.path) &&
+                    $0.1[1].contains("yarn --cwd excalidraw-app build")
+            })
+        )
     }
 
     func testSessionOriginStorePersistsPreferredPort() {
@@ -311,6 +460,11 @@ final class ExcalidrawRuntimeTests: XCTestCase {
             .appendingPathComponent("idx0-excalidraw-runtime-tests-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
+    }
+
+    private func writeExecutable(_ content: String, to path: URL) throws {
+        try content.write(to: path, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
     }
 }
 

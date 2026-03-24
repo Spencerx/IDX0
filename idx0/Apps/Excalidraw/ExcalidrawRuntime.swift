@@ -119,6 +119,7 @@ enum ExcalidrawTileRuntimeState: Equatable {
 
 enum ExcalidrawRuntimeError: LocalizedError {
     case missingTool(String)
+    case missingYarnPackageManager(nodePath: String)
     case commandFailed(command: String, code: Int32, stderr: String?)
     case missingArtifact(String)
     case startupTimeout
@@ -128,7 +129,21 @@ enum ExcalidrawRuntimeError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingTool(let tool):
-            return "Missing required tool: \(tool)"
+            switch tool {
+            case "git":
+                return "Excalidraw needs Git to fetch its source, but `git` was not found."
+            case "node":
+                return "Excalidraw needs Node.js to build, but `node` was not found."
+            case "yarn":
+                return "Excalidraw needs Yarn to build, but `yarn` was not found. Run `corepack enable` or install Yarn, then retry."
+            default:
+                return "Missing required tool: \(tool)"
+            }
+        case .missingYarnPackageManager(let nodePath):
+            return """
+            Excalidraw found Node.js at \(nodePath), but could not find `yarn` or `corepack`.
+            Run `corepack enable` for that Node installation, or install Yarn, then retry.
+            """
         case .commandFailed(let command, let code, let stderr):
             if let stderr, !stderr.isEmpty {
                 return "Command failed (\(code)): \(command)\n\(stderr)"
@@ -150,6 +165,11 @@ private struct ExcalidrawBuildRecord: Codable {
     let pinnedCommit: String
     let entrypoint: String
     let builtAt: Date
+}
+
+private struct ExcalidrawShellTool {
+    let executablePath: String
+    let shellCommand: String
 }
 
 @MainActor
@@ -238,8 +258,10 @@ final class ExcalidrawBuildCoordinator {
 
         let resolvedGitPath = try await ensureToolAvailable("git", paths: paths)
         let resolvedNodePath = try await ensureToolAvailable("node", paths: paths)
-        let resolvedYarnPath = try await ensureToolAvailable("yarn", paths: paths)
-        let preferredToolDirectories = uniqueParentDirectories(for: [resolvedGitPath, resolvedNodePath, resolvedYarnPath])
+        let resolvedYarnTool = try await resolveYarnTool(paths: paths, resolvedNodePath: resolvedNodePath)
+        let preferredToolDirectories = uniqueParentDirectories(
+            for: [resolvedGitPath, resolvedNodePath, resolvedYarnTool.executablePath]
+        )
 
         if fileManager.fileExists(atPath: paths.sourceDirectory.appendingPathComponent(".git", isDirectory: true).path) {
             appendBuildLog(paths: paths, line: "Refreshing existing repository")
@@ -269,7 +291,11 @@ final class ExcalidrawBuildCoordinator {
         onStateUpdate?(.building)
 
         let installCommand = nonInteractiveShellCommand(
-            manifest.installCommand,
+            replacingLeadingToolInvocation(
+                in: manifest.installCommand,
+                tool: "yarn",
+                replacement: resolvedYarnTool.shellCommand
+            ),
             preferredToolDirectories: preferredToolDirectories
         )
         try await runChecked(
@@ -280,7 +306,11 @@ final class ExcalidrawBuildCoordinator {
         )
 
         let buildCommand = nonInteractiveShellCommand(
-            manifest.buildCommand,
+            replacingLeadingToolInvocation(
+                in: manifest.buildCommand,
+                tool: "yarn",
+                replacement: resolvedYarnTool.shellCommand
+            ),
             preferredToolDirectories: preferredToolDirectories
         )
         try await runChecked(
@@ -345,6 +375,58 @@ final class ExcalidrawBuildCoordinator {
         throw ExcalidrawRuntimeError.missingTool(tool)
     }
 
+    private func resolveYarnTool(
+        paths: ExcalidrawRuntimePaths,
+        resolvedNodePath: String
+    ) async throws -> ExcalidrawShellTool {
+        do {
+            let resolvedYarnPath = try await ensureToolAvailable("yarn", paths: paths)
+            return ExcalidrawShellTool(
+                executablePath: resolvedYarnPath,
+                shellCommand: shellQuotedExecutable(resolvedYarnPath)
+            )
+        } catch let error as ExcalidrawRuntimeError {
+            switch error {
+            case .missingTool(let tool) where tool == "yarn":
+                appendBuildLog(paths: paths, line: "Yarn executable not found; trying corepack fallback")
+                break
+            default:
+                throw error
+            }
+        }
+
+        if let adjacentCorepackPath = adjacentExecutable(
+            named: "corepack",
+            nextTo: resolvedNodePath
+        ) {
+            appendBuildLog(paths: paths, line: "Resolved yarn via adjacent corepack -> \(adjacentCorepackPath)")
+            return ExcalidrawShellTool(
+                executablePath: adjacentCorepackPath,
+                shellCommand: "\(shellQuotedExecutable(adjacentCorepackPath)) yarn"
+            )
+        }
+
+        do {
+            let resolvedCorepackPath = try await ensureToolAvailable("corepack", paths: paths)
+            appendBuildLog(paths: paths, line: "Resolved yarn via corepack -> \(resolvedCorepackPath)")
+            return ExcalidrawShellTool(
+                executablePath: resolvedCorepackPath,
+                shellCommand: "\(shellQuotedExecutable(resolvedCorepackPath)) yarn"
+            )
+        } catch let error as ExcalidrawRuntimeError {
+            switch error {
+            case .missingTool(let tool) where tool == "corepack":
+                appendBuildLog(
+                    paths: paths,
+                    line: "Corepack was not found after Yarn lookup failed; Excalidraw cannot run package manager commands"
+                )
+                throw ExcalidrawRuntimeError.missingYarnPackageManager(nodePath: resolvedNodePath)
+            default:
+                throw error
+            }
+        }
+    }
+
     private func firstExecutablePath(from output: String) -> String? {
         let candidates = output
             .split(whereSeparator: \.isNewline)
@@ -352,6 +434,20 @@ final class ExcalidrawBuildCoordinator {
             .filter { !$0.isEmpty }
 
         return candidates.first(where: { $0.hasPrefix("/") })
+    }
+
+    private func adjacentExecutable(
+        named executable: String,
+        nextTo resolvedPath: String
+    ) -> String? {
+        let candidate = URL(fileURLWithPath: resolvedPath, isDirectory: false)
+            .deletingLastPathComponent()
+            .appendingPathComponent(executable, isDirectory: false)
+            .path
+        guard fileManager.isExecutableFile(atPath: candidate) else {
+            return nil
+        }
+        return candidate
     }
 
     private func uniqueParentDirectories(for resolvedToolPaths: [String]) -> [String] {
@@ -366,6 +462,23 @@ final class ExcalidrawBuildCoordinator {
         }
 
         return directories
+    }
+
+    private func replacingLeadingToolInvocation(
+        in command: String,
+        tool: String,
+        replacement: String
+    ) -> String {
+        if command == tool {
+            return replacement
+        }
+
+        let toolPrefix = "\(tool) "
+        guard command.hasPrefix(toolPrefix) else {
+            return command
+        }
+
+        return replacement + command.dropFirst(tool.count)
     }
 
     private func nonInteractiveShellCommand(
@@ -384,6 +497,10 @@ final class ExcalidrawBuildCoordinator {
 
         parts.append(command)
         return parts.joined(separator: "; ")
+    }
+
+    private func shellQuotedExecutable(_ value: String) -> String {
+        "'\(shellEscapeSingleQuoted(value))'"
     }
 
     private func shellEscapeSingleQuoted(_ value: String) -> String {
@@ -1033,7 +1150,7 @@ final class ExcalidrawTileController: ObservableObject, NiriAppTileRuntimeContro
         switch runtimeError {
         case .startupTimeout, .processExitedBeforeReady:
             return true
-        case .missingTool, .commandFailed, .missingArtifact, .cancelled:
+        case .missingTool, .missingYarnPackageManager, .commandFailed, .missingArtifact, .cancelled:
             return false
         }
     }
@@ -1043,7 +1160,7 @@ final class ExcalidrawTileController: ObservableObject, NiriAppTileRuntimeContro
             return paths.runtimeLogPath.path
         }
         switch runtimeError {
-        case .missingTool, .commandFailed, .missingArtifact:
+        case .missingTool, .missingYarnPackageManager, .commandFailed, .missingArtifact:
             return paths.buildLogPath.path
         case .startupTimeout, .processExitedBeforeReady, .cancelled:
             return paths.runtimeLogPath.path
