@@ -160,12 +160,15 @@ final class OpenCodeTileController: ObservableObject, NiriAppTileRuntimeControll
     private let defaultZoom: CGFloat = 0.5
     private let minimumZoom: CGFloat = 0.5
     private let maximumZoom: CGFloat = 3.0
+    private let maxWebContentReloadAttempts = 2
 
     private var startTask: Task<Void, Never>?
     private var process: Process?
     private var stdoutPipe: Pipe?
     private var stderrPipe: Pipe?
     private var logHandle: FileHandle?
+    private var webViewDelegate: EmbeddedWebViewDelegate?
+    private var webContentTerminationCount = 0
     private var userStopped = false
     private var processExitedDuringStartup = false
 
@@ -197,6 +200,12 @@ final class OpenCodeTileController: ObservableObject, NiriAppTileRuntimeControll
         configuration.websiteDataStore = .default()
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.pageZoom = defaultZoom
+
+        let delegate = EmbeddedWebViewDelegate(logLabel: "OpenCode[\(sessionID.uuidString)]") { [weak self] view in
+            self?.handleWebContentTermination(view)
+        }
+        webView.navigationDelegate = delegate
+        webViewDelegate = delegate
     }
 
     func ensureStarted() {
@@ -229,6 +238,7 @@ final class OpenCodeTileController: ObservableObject, NiriAppTileRuntimeControll
         startTask?.cancel()
         startTask = nil
         terminateProcess()
+        webContentTerminationCount = 0
         state = .idle
     }
 
@@ -423,6 +433,7 @@ final class OpenCodeTileController: ObservableObject, NiriAppTileRuntimeControll
         }
 
         let url = URL(string: "http://127.0.0.1:\(port)")!
+        webContentTerminationCount = 0
         webView.load(URLRequest(url: url))
         state = .live(urlString: url.absoluteString)
         appendRuntimeLog("runtime live at \(url.absoluteString)")
@@ -668,6 +679,7 @@ final class OpenCodeTileController: ObservableObject, NiriAppTileRuntimeControll
         terminateProcess()
 
         guard !userStopped else { return }
+        if case .failed = state { return }
         if startTask == nil {
             state = .failed(
                 message: "OpenCode process exited unexpectedly.",
@@ -723,5 +735,28 @@ final class OpenCodeTileController: ObservableObject, NiriAppTileRuntimeControll
         }
 
         appendLogData(data)
+    }
+
+    private func handleWebContentTermination(_ webView: WKWebView) {
+        webContentTerminationCount += 1
+        appendRuntimeLog("web content terminated count=\(webContentTerminationCount)")
+
+        guard case .live(let urlString) = state,
+              let url = URL(string: urlString) else {
+            return
+        }
+
+        if webContentTerminationCount <= maxWebContentReloadAttempts {
+            appendRuntimeLog("reloading embedded content after WebContent termination")
+            webView.load(URLRequest(url: url))
+            return
+        }
+
+        appendRuntimeLog("web content termination retry budget exhausted; terminating runtime process")
+        state = .failed(
+            message: "Embedded browser process crashed repeatedly. Open logs for details.",
+            logPath: paths.runtimeLogPath.path
+        )
+        terminateProcess()
     }
 }

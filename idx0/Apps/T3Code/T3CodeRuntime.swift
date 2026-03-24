@@ -561,12 +561,15 @@ final class T3TileController: ObservableObject, NiriAppTileRuntimeControlling {
     private let maxAutomaticRestarts = 3
     private let minimumZoom: CGFloat = 0.5
     private let maximumZoom: CGFloat = 3.0
+    private let maxWebContentReloadAttempts = 2
 
     private var startTask: Task<Void, Never>?
     private var process: Process?
     private var stdoutPipe: Pipe?
     private var stderrPipe: Pipe?
     private var logHandle: FileHandle?
+    private var webViewDelegate: EmbeddedWebViewDelegate?
+    private var webContentTerminationCount = 0
     private var userStopped = false
     private var automaticRestartCount = 0
 
@@ -590,6 +593,12 @@ final class T3TileController: ObservableObject, NiriAppTileRuntimeControlling {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.websiteDataStore = .default()
         webView = WKWebView(frame: .zero, configuration: configuration)
+
+        let delegate = EmbeddedWebViewDelegate(logLabel: "T3Code[\(sessionID.uuidString)]") { [weak self] view in
+            self?.handleWebContentTermination(view)
+        }
+        webView.navigationDelegate = delegate
+        webViewDelegate = delegate
     }
 
     func ensureStarted() {
@@ -621,6 +630,7 @@ final class T3TileController: ObservableObject, NiriAppTileRuntimeControlling {
         startTask?.cancel()
         startTask = nil
         terminateProcess()
+        webContentTerminationCount = 0
         state = .idle
     }
 
@@ -717,6 +727,7 @@ final class T3TileController: ObservableObject, NiriAppTileRuntimeControlling {
         }
 
         let url = URL(string: "http://127.0.0.1:\(port)")!
+        webContentTerminationCount = 0
         webView.load(URLRequest(url: url))
         state = .live(urlString: url.absoluteString)
         appendRuntimeLog("runtime live at \(url.absoluteString)")
@@ -1085,6 +1096,29 @@ final class T3TileController: ObservableObject, NiriAppTileRuntimeControlling {
         }
 
         appendLogData(data)
+    }
+
+    private func handleWebContentTermination(_ webView: WKWebView) {
+        webContentTerminationCount += 1
+        appendRuntimeLog("web content terminated count=\(webContentTerminationCount)")
+
+        guard case .live(let urlString) = state,
+              let url = URL(string: urlString) else {
+            return
+        }
+
+        if webContentTerminationCount <= maxWebContentReloadAttempts {
+            appendRuntimeLog("reloading embedded content after WebContent termination")
+            webView.load(URLRequest(url: url))
+            return
+        }
+
+        appendRuntimeLog("web content termination retry budget exhausted; terminating runtime process")
+        state = .failed(
+            message: "Embedded browser process crashed repeatedly. Open logs for details.",
+            logPath: paths.runtimeLogPath.path
+        )
+        terminateProcess()
     }
 
     private func isRetryableStartupError(_ error: Error) -> Bool {
