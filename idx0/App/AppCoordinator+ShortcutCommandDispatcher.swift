@@ -6,7 +6,24 @@ extension AppCoordinator {
         shortcutCommandDispatcher.perform(action, coordinator: self)
     }
 
+    /// Actions that the onboarding overlay intercepts so the real canvas is not affected.
+    private static let onboardingInterceptedActions: Set<ShortcutActionID> = [
+        .niriAddTerminalRight, .niriAddTaskBelow, .niriAddBrowserTile, .niriOpenAddTileMenu,
+        .niriFocusLeft, .niriFocusDown, .niriFocusUp, .niriFocusRight,
+        .niriToggleOverview, .niriConfirmSelection, .niriToggleColumnTabbedDisplay,
+        .niriToggleSnap, .niriFocusWorkspaceUp, .niriFocusWorkspaceDown,
+        .niriMoveColumnToWorkspaceUp, .niriMoveColumnToWorkspaceDown,
+        .splitRight, .splitDown, .closePane, .nextPane, .previousPane,
+    ]
+
     func performShortcutAction(_ action: ShortcutActionID) -> Bool {
+        // While the onboarding walkthrough is active, intercept canvas actions
+        // so only the dummy practice canvas responds, not the real one.
+        if showingNiriOnboarding, Self.onboardingInterceptedActions.contains(action) {
+            postOnboardingAction(action)
+            return true
+        }
+
         let selectedSessionID = sessionService.selectedSessionID
         let niriEnabled = sessionService.settings.niriCanvasEnabled
 
@@ -138,6 +155,7 @@ extension AppCoordinator {
             } else {
                 sessionService.splitPane(sessionID: selectedSessionID, direction: .vertical)
             }
+            postOnboardingAction(action)
             return true
         case .splitDown:
             guard let selectedSessionID else { return false }
@@ -146,6 +164,7 @@ extension AppCoordinator {
             } else {
                 sessionService.splitPane(sessionID: selectedSessionID, direction: .horizontal)
             }
+            postOnboardingAction(action)
             return true
         case .closePane:
             guard let selectedSessionID else { return false }
@@ -154,6 +173,7 @@ extension AppCoordinator {
             } else {
                 sessionService.closePane(sessionID: selectedSessionID)
             }
+            postOnboardingAction(action)
             return true
         case .nextPane:
             guard let selectedSessionID else { return false }
@@ -172,6 +192,14 @@ extension AppCoordinator {
         }
     }
 
+    private func postOnboardingAction(_ action: ShortcutActionID) {
+        NotificationCenter.default.post(
+            name: .niriOnboardingActionPerformed,
+            object: nil,
+            userInfo: ["action": action.rawValue]
+        )
+    }
+
     func handleNiriShortcutAction(
         _ action: ShortcutActionID,
         selectedSessionID: UUID?,
@@ -181,10 +209,12 @@ extension AppCoordinator {
         case .niriAddTerminalRight:
             guard niriEnabled, let selectedSessionID else { return false }
             _ = sessionService.niriAddTerminalRight(in: selectedSessionID)
+            postOnboardingAction(action)
             return true
         case .niriAddTaskBelow:
             guard niriEnabled, let selectedSessionID else { return false }
             _ = sessionService.niriAddTaskBelow(in: selectedSessionID)
+            postOnboardingAction(action)
             return true
         case .niriAddBrowserTile:
             guard niriEnabled, let selectedSessionID else { return false }
@@ -195,22 +225,27 @@ extension AppCoordinator {
         case .niriFocusLeft:
             guard niriEnabled, let selectedSessionID else { return false }
             sessionService.niriFocusNeighbor(sessionID: selectedSessionID, horizontal: -1)
+            postOnboardingAction(action)
             return true
         case .niriFocusDown:
             guard niriEnabled, let selectedSessionID else { return false }
             sessionService.niriFocusNeighbor(sessionID: selectedSessionID, vertical: 1)
+            postOnboardingAction(action)
             return true
         case .niriFocusUp:
             guard niriEnabled, let selectedSessionID else { return false }
             sessionService.niriFocusNeighbor(sessionID: selectedSessionID, vertical: -1)
+            postOnboardingAction(action)
             return true
         case .niriFocusRight:
             guard niriEnabled, let selectedSessionID else { return false }
             sessionService.niriFocusNeighbor(sessionID: selectedSessionID, horizontal: 1)
+            postOnboardingAction(action)
             return true
         case .niriToggleOverview:
             guard niriEnabled, let selectedSessionID else { return false }
             sessionService.toggleNiriOverview(sessionID: selectedSessionID)
+            postOnboardingAction(action)
             return true
         case .niriConfirmSelection:
             guard niriEnabled, let selectedSessionID else { return false }

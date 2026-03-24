@@ -6,6 +6,9 @@ struct InlineAdvancedSettings: View {
     @ObservedObject var sessionService: SessionService
     @Environment(\.themeColors) private var tc
 
+    @State private var onboardingResetPending = false
+    @State private var fullOnboardingResetPending = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SettingSectionHeader(title: "Shell")
@@ -39,23 +42,50 @@ struct InlineAdvancedSettings: View {
             SettingSectionHeader(title: "Reset")
 
             VStack(alignment: .leading, spacing: 10) {
-                Button {
-                    sessionService.saveSettings { settings in
-                        settings.hasSeenNiriOnboarding = false
+                if fullOnboardingResetPending {
+                    resetConfirmation("All onboarding will show on next launch. Restart IDX0 to see it.")
+                } else if onboardingResetPending {
+                    resetConfirmation("Niri walkthrough will show on next launch. Restart IDX0 to see it.")
+                } else {
+                    Button {
+                        sessionService.saveSettings { settings in
+                            settings.hasSeenNiriOnboarding = false
+                        }
+                        onboardingResetPending = true
+                    } label: {
+                        Text("Reset Niri Walkthrough")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(tc.secondaryText)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(tc.surface0, in: RoundedRectangle(cornerRadius: 4))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(tc.surface2.opacity(0.5), lineWidth: 0.5)
+                            )
                     }
-                } label: {
-                    Text("Show Niri Onboarding Again")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(tc.secondaryText)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(tc.surface0, in: RoundedRectangle(cornerRadius: 4))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(tc.surface2.opacity(0.5), lineWidth: 0.5)
-                        )
+                    .buttonStyle(.plain)
+
+                    Button {
+                        sessionService.saveSettings { settings in
+                            settings.hasSeenFirstRun = false
+                            settings.hasSeenNiriOnboarding = false
+                        }
+                        fullOnboardingResetPending = true
+                    } label: {
+                        Text("Reset All Onboarding")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(tc.secondaryText)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(tc.surface0, in: RoundedRectangle(cornerRadius: 4))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(tc.surface2.opacity(0.5), lineWidth: 0.5)
+                            )
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
 
                 Button {
                     sessionService.saveSettings { settings in
@@ -84,5 +114,19 @@ struct InlineAdvancedSettings: View {
             }
             .padding(.vertical, 4)
         }
+    }
+
+    private func resetConfirmation(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(.green)
+            Text(message)
+                .font(.system(size: 11))
+                .foregroundStyle(tc.secondaryText)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(tc.surface0, in: RoundedRectangle(cornerRadius: 4))
     }
 }

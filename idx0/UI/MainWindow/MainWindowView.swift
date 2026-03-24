@@ -64,6 +64,13 @@ struct MainWindowView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
                     .zIndex(100)
             }
+
+            // Niri onboarding coaching overlay
+            if coordinator.showingNiriOnboarding {
+                NiriOnboardingOverlay()
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(99)
+            }
         }
         .ignoresSafeArea(.container, edges: .top)
         .background(WindowConfigurator())
@@ -72,6 +79,7 @@ struct MainWindowView: View {
         .animation(.spring(duration: 0.28, bounce: 0.12), value: coordinator.showingQuickSwitch)
         .animation(.easeOut(duration: 0.12), value: coordinator.showingCheckpoints)
         .animation(.easeOut(duration: 0.15), value: coordinator.showingDiffOverlay)
+        .animation(.spring(duration: 0.35, bounce: 0.15), value: coordinator.showingNiriOnboarding)
         .onAppear {
             workflowService.setFocusedSession(sessionService.selectedSessionID)
             maybePresentNiriOnboardingIfNeeded()
@@ -86,9 +94,9 @@ struct MainWindowView: View {
         .onChange(of: sessionService.settings.hasSeenFirstRun) { _, _ in
             maybePresentNiriOnboardingIfNeeded()
         }
-        .onChange(of: sessionService.settings.hasSeenNiriOnboarding) { _, _ in
-            maybePresentNiriOnboardingIfNeeded()
-        }
+        // Note: hasSeenNiriOnboarding changes are NOT observed here so that
+        // resetting the walkthrough from settings requires an app restart,
+        // matching the fresh-user experience.
         .modifier(MainWindowSheets())
         .modifier(MainWindowAlerts())
     }

@@ -2,19 +2,22 @@ import SwiftUI
 
 struct KeyboardShortcutsSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.themeColors) private var tc
     @EnvironmentObject private var sessionService: SessionService
 
     private let registry = ShortcutRegistry.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Header — matches onboarding header style
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Keyboard Shortcuts")
                         .font(.system(size: 14, weight: .semibold))
-                    Text("Mode: \(sessionService.settings.keybindingMode.displayName)  •  Mod: \(sessionService.settings.modKeySetting.displayName)")
+                        .foregroundStyle(tc.primaryText)
+                    Text("Mode: \(sessionService.settings.keybindingMode.displayName)  \u{2022}  Mod: \(sessionService.settings.modKeySetting.displayName)")
                         .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(tc.tertiaryText)
                 }
                 Spacer()
                 Button("Done") { dismiss() }
@@ -22,10 +25,12 @@ struct KeyboardShortcutsSheet: View {
                     .controlSize(.small)
                     .keyboardShortcut(.cancelAction)
             }
-            .padding(16)
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 12)
 
             Rectangle()
-                .fill(Color.white.opacity(0.06))
+                .fill(tc.divider)
                 .frame(height: 1)
 
             ScrollView {
@@ -47,9 +52,10 @@ struct KeyboardShortcutsSheet: View {
                         }
                     }
                 }
-                .padding(16)
+                .padding(20)
             }
         }
+        .background(tc.sidebarBackground)
         .frame(width: 460, height: 560)
     }
 
@@ -59,7 +65,7 @@ struct KeyboardShortcutsSheet: View {
             Text(title.uppercased())
                 .font(.system(size: 9, weight: .bold, design: .rounded))
                 .tracking(1)
-                .foregroundStyle(.white.opacity(0.3))
+                .foregroundStyle(tc.accent)
                 .padding(.bottom, 2)
 
             content()
@@ -70,16 +76,20 @@ struct KeyboardShortcutsSheet: View {
         HStack {
             Text(label)
                 .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.75))
+                .foregroundStyle(tc.secondaryText)
 
             Spacer(minLength: 16)
 
             Text(shortcut)
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.4))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 4))
+                .foregroundStyle(tc.tertiaryText)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(tc.surface0, in: RoundedRectangle(cornerRadius: 4))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(tc.surface2.opacity(0.5), lineWidth: 0.5)
+                )
         }
     }
 }

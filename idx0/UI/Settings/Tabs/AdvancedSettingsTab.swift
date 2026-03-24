@@ -26,8 +26,15 @@ struct AdvancedSettingsTab: View {
             }
 
             Section("Reset") {
-                Button("Show Niri Onboarding Again On Next Niri Session") {
+                Button("Reset Niri Walkthrough (requires restart)") {
                     sessionService.saveSettings { settings in
+                        settings.hasSeenNiriOnboarding = false
+                    }
+                }
+
+                Button("Reset All Onboarding (requires restart)") {
+                    sessionService.saveSettings { settings in
+                        settings.hasSeenFirstRun = false
                         settings.hasSeenNiriOnboarding = false
                     }
                 }

@@ -7,13 +7,23 @@ struct MainWindowSheets: ViewModifier {
     @EnvironmentObject private var sessionService: SessionService
     @EnvironmentObject private var workflowService: WorkflowService
 
+    /// Captured once on appear so that resetting hasSeenFirstRun mid-session
+    /// does NOT immediately re-show the first-run sheet (requires restart).
+    @State private var shouldShowFirstRun: Bool?
+
     func body(content: Content) -> some View {
         content
+            .onAppear {
+                if shouldShowFirstRun == nil {
+                    shouldShowFirstRun = !sessionService.settings.hasSeenFirstRun
+                }
+            }
             .sheet(
                 isPresented: Binding(
-                    get: { !sessionService.settings.hasSeenFirstRun },
+                    get: { shouldShowFirstRun == true },
                     set: { showing in
                         if !showing {
+                            shouldShowFirstRun = false
                             sessionService.saveSettings { $0.hasSeenFirstRun = true }
                         }
                     }
@@ -39,23 +49,7 @@ struct MainWindowSheets: ViewModifier {
                 KeyboardShortcutsSheet()
                     .environmentObject(sessionService)
             }
-            .sheet(
-                isPresented: Binding(
-                    get: { coordinator.showingNiriOnboarding },
-                    set: { showing in
-                        coordinator.showingNiriOnboarding = showing
-                        if !showing {
-                            sessionService.saveSettings { settings in
-                                settings.hasSeenNiriOnboarding = true
-                            }
-                        }
-                    }
-                )
-            ) {
-                NiriOnboardingSheet()
-                    .environmentObject(coordinator)
-                    .environmentObject(sessionService)
-            }
+            // Niri onboarding is now an overlay in MainWindowView, not a sheet.
             .sheet(item: $workflowService.activeHandoffComposer) { draft in
                 HandoffComposerSheet(initialDraft: draft)
                     .environmentObject(sessionService)
